@@ -1,0 +1,156 @@
+basePath: /
+definitions:
+  http.HandleTokenRequest:
+    properties:
+      user_id:
+        type: string
+    type: object
+  http.LogoutRequest:
+    properties:
+      refresh_token:
+        type: string
+    type: object
+  http.RefreshRequest:
+    properties:
+      access_token:
+        type: string
+      refresh_token:
+        type: string
+    type: object
+  httperror.ErrorResponse:
+    properties:
+      error:
+        example: bad request
+        type: string
+    type: object
+  stateless.TokenPair:
+    properties:
+      accessToken:
+        type: string
+      refreshToken:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: JWT(stateless toket) авторизация
+  title: Auth API
+  version: "1.0"
+paths:
+  /auth/logout:
+    post:
+      consumes:
+      - application/json
+      description: Удаляет сессию refresh токена
+      parameters:
+      - description: Refresh токен
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/http.LogoutRequest'
+      responses:
+        "200":
+          description: ok
+          schema:
+            type: string
+        "400":
+          description: bad request
+          schema:
+            type: string
+        "500":
+          description: internal server error
+          schema:
+            type: string
+      security:
+      - Bearer: []
+      summary: Выход пользователя
+      tags:
+      - auth
+  /auth/me:
+    get:
+      description: |-
+        Возвращает ID пользователя по access токену
+        Позжже будет заменена взятием других данных пользователя
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: unauthorized
+          schema:
+            $ref: '#/definitions/httperror.ErrorResponse'
+      security:
+      - Bearer: []
+      summary: Получение текущего пользователя
+      tags:
+      - auth
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: Обновляет токены по старой паре
+      parameters:
+      - description: Пара токенов
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/http.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/stateless.TokenPair'
+        "400":
+          description: bad request
+          schema:
+            $ref: '#/definitions/httperror.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httperror.ErrorResponse'
+      summary: Обновление пары токенов
+      tags:
+      - auth
+  /auth/token:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Возвращает пару токенов по user_id,
+        в дальнейшем будет заменена настоящим алгоритмом входа
+      parameters:
+      - description: ID пользователя
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/http.HandleTokenRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/stateless.TokenPair'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httperror.ErrorResponse'
+      summary: Получение access и refresh токенов
+      tags:
+      - auth
+securityDefinitions:
+  Bearer:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
