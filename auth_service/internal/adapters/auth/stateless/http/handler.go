@@ -67,7 +67,7 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 		UserAgent: r.UserAgent(),
 		IP:        r.RemoteAddr,
 	}
-	tokens, err := h.service.TestAuthenticateUser(cmd)
+	tokens, err := h.service.TestAuthenticateUser(r.Context(), cmd)
 	if err != nil {
 		httperror.WriteJSONError(w, http.StatusUnauthorized, "internal server error")
 		return
@@ -119,7 +119,7 @@ func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		UserAgent:    r.UserAgent(),
 		IP:           r.RemoteAddr,
 	}
-	tokens, err := h.service.RefreshTokens(cmd)
+	tokens, err := h.service.RefreshTokens(r.Context(), cmd)
 	if err != nil {
 		if err == stateless.ErrUserAgentChanged {
 			httperror.WriteJSONError(w, http.StatusUnauthorized, "user agent changed")
@@ -162,7 +162,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	err = h.service.Logout(stateless.RefreshToken(req.RefreshToken), r.Context().Value("user_id").(stateless.UserID))
+	err = h.service.Logout(r.Context(), stateless.RefreshToken(req.RefreshToken), r.Context().Value("user_id").(stateless.UserID))
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return

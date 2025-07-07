@@ -13,6 +13,7 @@ type Config struct {
 	// JWT configuration
 	JWT   JWTConfig
 	Debug bool `env:"DEBUG" envDefault:"false"`
+	UserIPChangedWebhookUrl string `env:"USER_IP_CHANGED_WEBHOOK_URL" envDefault:""`
 }
 
 type DatabaseConfig struct {

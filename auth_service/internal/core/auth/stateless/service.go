@@ -2,12 +2,13 @@ package stateless
 
 import (
 	"log/slog"
+	"context"
 )
 
 type AuthRepository interface {
-	SaveSession(session SessionData) error
-	DeleteSession(userID UserID, refreshHash string) error
-	GetSession(userID UserID, refreshHash string) (SessionData, error)
+	SaveSession(ctx context.Context, session SessionData) error
+	DeleteSession(ctx context.Context, userID UserID, refreshHash string) error
+	GetSession(ctx context.Context, userID UserID, refreshHash string) (SessionData, error)
 }
 
 type AccessTokenAlgoHelper interface {

@@ -1,5 +1,9 @@
 package stateless
 
+import (
+	"context"
+)
+
 type UserID string
 
 type UserRole string
@@ -10,7 +14,7 @@ type TestAuthCommand struct {
 	IP        string
 }
 
-func (s *StatelessAuthService) TestAuthenticateUser(cmd TestAuthCommand) (TokenPair, error) {
+func (s *StatelessAuthService) TestAuthenticateUser(ctx context.Context, cmd TestAuthCommand) (TokenPair, error) {
 	userID := cmd.UserId
 	str, err := s.tokenPairIDGenerator.Generate()
 	tokenPairID := TokenPairID(str)
@@ -48,7 +52,7 @@ func (s *StatelessAuthService) TestAuthenticateUser(cmd TestAuthCommand) (TokenP
 		UserAgent:   cmd.UserAgent,
 		IP:          cmd.IP,
 	}
-	err = s.authRepo.SaveSession(sessionData)
+	err = s.authRepo.SaveSession(ctx, sessionData)
 	if err != nil {
 		return TokenPair{}, err
 	}

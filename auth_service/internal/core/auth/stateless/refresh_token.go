@@ -1,5 +1,9 @@
 package stateless
 
+import (
+	"context"
+)
+
 type RefreshTokenCommand struct {
 	AccessToken  AccessToken
 	RefreshToken RefreshToken
@@ -7,7 +11,7 @@ type RefreshTokenCommand struct {
 	IP           string
 }
 
-func (s *StatelessAuthService) RefreshTokens(cmd RefreshTokenCommand) (TokenPair, error) {
+func (s *StatelessAuthService) RefreshTokens(ctx context.Context, cmd RefreshTokenCommand) (TokenPair, error) {
 	accessTokenPayload, err := s.accessTokenAlgs.Validate(cmd.AccessToken)
 	if err != nil {
 		return TokenPair{}, err
@@ -18,12 +22,13 @@ func (s *StatelessAuthService) RefreshTokens(cmd RefreshTokenCommand) (TokenPair
 		return TokenPair{}, err
 	}
 
-	sessionData, err := s.authRepo.GetSession(accessTokenPayload.UserID, refreshHash)
+	sessionData, err := s.authRepo.GetSession(ctx, accessTokenPayload.UserID, refreshHash)
 	if err != nil {
 		return TokenPair{}, err
 	}
 
 	if sessionData.UserAgent != cmd.UserAgent {
+		s.Logout(ctx, cmd.RefreshToken, accessTokenPayload.UserID)
 		return TokenPair{}, ErrUserAgentChanged
 	}
 
@@ -59,7 +64,7 @@ func (s *StatelessAuthService) RefreshTokens(cmd RefreshTokenCommand) (TokenPair
 
 	sessionData.RefreshHash = newRefreshHash
 
-	err = s.authRepo.SaveSession(sessionData)
+	err = s.authRepo.SaveSession(ctx, sessionData)
 	if err != nil {
 		return TokenPair{}, err
 	}

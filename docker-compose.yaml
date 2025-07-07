@@ -3,7 +3,7 @@ version: '3.8'
 services:
   app:
     build:
-      context: .
+      context: ./auth_service
       dockerfile: Dockerfile
     ports:
       - "8080:8080"
@@ -22,7 +22,7 @@ services:
       - backend
 
   db:
-    image: postgres:15
+    image: postgres:17
     restart: always
     environment:
       POSTGRES_USER: ${DB_USER}

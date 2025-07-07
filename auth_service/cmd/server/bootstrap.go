@@ -1,8 +1,6 @@
 package main
 
 import (
-	"database/sql"
-	"fmt"
 	statelessauthhttp "medods_test/internal/adapters/auth/stateless/http"
 	"medods_test/internal/adapters/auth/stateless/jwthelper"
 	"medods_test/internal/adapters/auth/stateless/postgres"
@@ -10,11 +8,22 @@ import (
 	"medods_test/internal/core/auth/stateless"
 	"medods_test/pkg/guidgenerator"
 	"medods_test/pkg/unikelongstring"
+	"medods_test/pkg/eventbus"
+	"context"
+	"database/sql"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"net"
+	"os"
+	"time"
+	"strings"
 )
 
 type App struct {
 	_config *config.Config
+
+	_context context.Context
 
 	//инфраструктура
 	_db                        *sql.DB
@@ -25,12 +34,13 @@ type App struct {
 	_refreshTokenAlgoHelper    stateless.RefreshTokenAlgoHelper
 	_tokenPairIDGenerator      stateless.StringIdGenerator
 	_authHttpMiddlewareFactory *statelessauthhttp.MiddlewareFactory
+	_logger				   	   *slog.Logger
 
 	//логика
 	_authService *stateless.StatelessAuthService
 
-	//каналы событий
-	userIPChanged chan stateless.UserIPChangedEvent
+	//шины событий
+	_userIpChangedBus *eventbus.OneCallbackBus[stateless.UserIPChangedEvent]
 
 	//переменные, определяющие что стартовать
 	startHttp bool
@@ -39,17 +49,46 @@ type App struct {
 	started bool
 }
 
-func (a *App) Run() {
+func (a *App) Run(ctx context.Context) {
+	if a.started {
+		return
+	}
+	a.started = true
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	a._context = ctx
+
+	a._userIpChangedBus.SetCallBack(func(event stateless.UserIPChangedEvent) {
+		//запрос на эндпойнт
+		if a.config().UserIPChangedWebhookUrl != "" {
+			if err := a.doUserIPChangedWebhook(event); err != nil {
+				a.Logger().Error("failed to call UserIPChangedWebhook", "error", err)
+			} else {
+				a.Logger().Info("UserIPChangedWebhook called successfully", "user_id", event.UserID, "new_ip", event.NewIP)
+			}
+		} else {
+			a.Logger().Warn("UserIPChangedWebhookUrl is not configured, skipping webhook call")
+		}
+		
+	})
 	if a.startHttp {
 		server := &http.Server{
 			Addr:    ":" + fmt.Sprint(a.config().Port),
 			Handler: a._httpMux,
+			BaseContext: func(net.Listener) context.Context {
+				return ctx
+			},
 		}
 
-		err := server.ListenAndServe()
-		if err != nil {
-			panic(err)
-		}
+		go func() {
+			<-ctx.Done()
+			if err := server.Shutdown(context.Background()); err != nil {
+				
+			}
+		}()
 	}
 }
 
@@ -58,7 +97,7 @@ func (a *App) AddHttp() error {
 
 	mux := a.httpServer()
 
-	authHandler := statelessauthhttp.NewHandler(*service, *a.AuthMiddleware())
+	authHandler := statelessauthhttp.NewHandler(*service, *a.authMiddleware())
 
 	authHandler.RegisterRoutes(mux)
 
@@ -98,7 +137,7 @@ func (a *App) tokenPairIDGenerator() *stateless.StringIdGenerator {
 func (a *App) authService() *stateless.StatelessAuthService {
 	if a._authService == nil {
 		a._authRepo = a.authRepository()
-		a._authService = stateless.NewStatelessAuthService(a._authRepo, *a.accessTokenAlgoHelper(), *a.refreshTokenAlgoHelper(), *a.tokenPairIDGenerator(), nil, nil)
+		a._authService = stateless.NewStatelessAuthService(a._authRepo, *a.accessTokenAlgoHelper(), *a.refreshTokenAlgoHelper(), *a.tokenPairIDGenerator(), a.userIPChangedBus(), nil)
 	}
 	return a._authService
 }
@@ -108,6 +147,13 @@ func (a *App) authRepository() stateless.AuthRepository {
 		a._authRepo = postgres.NewPostgresAuthRepository(a.db(), &postgres.Config{Prefix: a.config().Database.Prefix})
 	}
 	return a._authRepo
+}
+
+func (a *App) userIPChangedBus() *eventbus.OneCallbackBus[stateless.UserIPChangedEvent] {
+	if a._userIpChangedBus == nil {
+		a._userIpChangedBus = &eventbus.OneCallbackBus[stateless.UserIPChangedEvent]{}
+	}
+	return a._userIpChangedBus
 }
 
 func (a *App) config() *config.Config {
@@ -146,10 +192,59 @@ func (a *App) db() *sql.DB {
 	return a._db
 }
 
-func (a *App) AuthMiddleware() *statelessauthhttp.MiddlewareFactory {
+func (a *App) authMiddleware() *statelessauthhttp.MiddlewareFactory {
 	if a._authHttpMiddlewareFactory == nil {
 		a._authHttpMiddlewareFactory = statelessauthhttp.NewMiddlewareFactory(*a.accessTokenAlgoHelper())
 	}
 	return a._authHttpMiddlewareFactory
 }
 
+func (a *App) doUserIPChangedWebhook(event stateless.UserIPChangedEvent) (error) {
+	if a.config().UserIPChangedWebhookUrl == "" {
+		return fmt.Errorf("UserIPChangedWebhookUrl is not configured")
+	}
+
+	client := a.httpClient()
+
+	body := fmt.Sprintf(`{"user_id": "%s", "new_ip": "%s"}`, event.UserID, event.NewIP)
+
+	req, err := http.NewRequestWithContext(a._context, http.MethodPost, a.config().UserIPChangedWebhookUrl, strings.NewReader(body))
+	if err != nil {
+		return nil
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+
+	return nil
+}
+
+
+
+func (a *App) httpClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout: 10 * time.Second,
+		},
+	}
+}
+
+func (a *App) Logger() *slog.Logger {
+	if a._logger == nil {
+		a._logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
+	}
+	return a._logger
+}
