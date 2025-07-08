@@ -1,50 +1,55 @@
 package config
 
 import (
-	"github.com/joho/godotenv"
+	"fmt"
 	"github.com/kelseyhightower/envconfig"
+	"encoding/json"
 )
 
 type Config struct {
-	Port int    `env:"PORT" envDefault:"8080"`
-	Host string `env:"HOST" envDefault:"localhost"`
-	// Database configuration
-	Database DatabaseConfig
-	// JWT configuration
-	JWT   JWTConfig
-	Debug bool `env:"DEBUG" envDefault:"false"`
-	UserIPChangedWebhookUrl string `env:"USER_IP_CHANGED_WEBHOOK_URL" envDefault:""`
+	Port                     int    `envconfig:"PORT" default:"8080"`
+	Host                     string `envconfig:"HOST" default:"localhost"`
+	Debug                    bool   `envconfig:"DEBUG" default:"false"`
+	UserIPChangedWebhookUrl  string `envconfig:"USER_IP_CHANGED_WEBHOOK_URL" default:""`
+	Database                 DatabaseConfig
+	JWT                      JWTConfig
 }
 
 type DatabaseConfig struct {
-	Host     string `env:"DB_HOST" envDefault:"localhost"`
-	Port     int    `env:"DB_PORT" envDefault:"5432"`
-	User     string `env:"DB_USER" envDefault:"user"`
-	Password string `env:"DB_PASSWORD" envDefault:"password"`
-	Name     string `env:"DB_NAME" envDefault:"dbname"`
-	DBType   string `env:"DB_TYPE" envDefault:"postgres"`
-	Prefix   string `env:"DB_PREFIX" envDefault:""`
+	Host     string `envconfig:"DB_HOST" default:"127.0.0.1"`
+	Port     int    `envconfig:"DB_PORT" default:"5432"`
+	User     string `envconfig:"DB_USER" default:"app"`
+	Password string `envconfig:"DB_PASSWORD" default:"app"`
+	Name     string `envconfig:"DB_NAME" default:"app"`
+	DBType   string `envconfig:"DB_TYPE" default:"postgres"`
+	Prefix   string `envconfig:"DB_PREFIX" default:""`
 }
 
-// JWT configuration
 type JWTConfig struct {
-	AccessSecret  string `env:"JWT_ACCESS_SECRET" envDefault:"secret"`
-	RefreshSecret string `env:"JWT_REFRESH_SECRET" envDefault:"refresh_secret"`
+	AccessSecret  string `envconfig:"JWT_ACCESS_SECRET" default:"secret"`
+	RefreshSecret string `envconfig:"JWT_REFRESH_SECRET" default:"refresh_secret"`
 }
 
-// Load loads the configuration from environment variables
 func (c *Config) Load() error {
-	// Load environment variables from .env file
-	err := godotenv.Load()
-	if err != nil {
-		return err
+	if err := envconfig.Process("", c); err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Unmarshal environment variables into the Config struct
-	err = envconfig.Process("", c)
+	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
-		return err
+		fmt.Printf("failed to marshal config to JSON: %v", err)
+	} else {
+		fmt.Println("Loaded config:\n" + string(data))
 	}
 
 	return nil
+}
+
+func New() (*Config, error) {
+	var cfg Config
+	if err := cfg.Load(); err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
 }

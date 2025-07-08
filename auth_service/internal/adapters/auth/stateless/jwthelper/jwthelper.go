@@ -33,18 +33,25 @@ func (h *JWTAccessTokenHelper) Generate(payload stateless.AccessTokenPayload) (s
 }
 
 func (h *JWTAccessTokenHelper) Validate(token stateless.AccessToken) (stateless.AccessTokenPayload, error) {
-	t, err := jwt.Parse(string(token), func(token *jwt.Token) (interface{}, error) {
+	claims := jwt.MapClaims{}
+	t, err := jwt.ParseWithClaims(string(token), claims, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok || token.Method.Alg() != "HS512" {
 			return nil, errors.New("unexpected signing method")
 		}
 		return h.Secret, nil
 	})
-	if err != nil || !t.Valid {
-		return stateless.AccessTokenPayload{}, errors.New("invalid token")
+	if err != nil {
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			return stateless.AccessTokenPayload{
+				UserID:      stateless.UserID(claims["user_id"].(string)),
+				TokenPairID: stateless.TokenPairID(claims["token_pair_id"].(string)),
+				Role:        stateless.UserRole(claims["role"].(string)),
+			}, stateless.ErrAccessTokenExpired
+		}
+		return stateless.AccessTokenPayload{}, stateless.ErrAccessTokenInvalid
 	}
-	claims, ok := t.Claims.(jwt.MapClaims)
-	if !ok {
-		return stateless.AccessTokenPayload{}, errors.New("invalid claims")
+	if !t.Valid {
+		return stateless.AccessTokenPayload{}, stateless.ErrAccessTokenInvalid
 	}
 	return stateless.AccessTokenPayload{
 		UserID:      stateless.UserID(claims["user_id"].(string)),

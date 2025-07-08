@@ -5,6 +5,8 @@ import (
 	"io"
 	"medods_test/internal/core/auth/stateless"
 
+	"log/slog"
+	"medods_test/pkg/getip"
 	"medods_test/pkg/httperror"
 	"net/http"
 )
@@ -12,12 +14,14 @@ import (
 type Handler struct {
 	service           stateless.StatelessAuthService
 	middlewareFactory MiddlewareFactory
+	logger            slog.Logger
 }
 
-func NewHandler(service stateless.StatelessAuthService, authMiddlewareFactory MiddlewareFactory) *Handler {
+func NewHandler(service stateless.StatelessAuthService, authMiddlewareFactory MiddlewareFactory, logger *slog.Logger) *Handler {
 	return &Handler{
 		service:           service,
 		middlewareFactory: authMiddlewareFactory,
+		logger:            *logger,
 	}
 }
 
@@ -26,7 +30,7 @@ type AccessTokenAlgoHelper interface {
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/auth/handleToken", h.handleToken)
+	mux.HandleFunc("/auth/token", h.handleToken)
 	mux.HandleFunc("/auth/refresh", h.handleRefresh)
 	mux.HandleFunc("/auth/logout", h.middlewareFactory.Wrap(h.handleLogout))
 }
@@ -43,9 +47,11 @@ type HandleTokenRequest struct {
 // @Accept json
 // @Produce json
 // @Param request body HandleTokenRequest true "ID пользователя"
-// @Example request "Пример запроса" {
-//   "user_id": "123e4567-e89b-12d3-a456-426614174000"
-// }
+//
+//	@Example request "Пример запроса" {
+//	  "user_id": "123e4567-e89b-12d3-a456-426614174000"
+//	}
+//
 // @Success 200 {object} stateless.TokenPair
 // @Failure 401 {object} httperror.ErrorResponse
 // @Router /auth/token [post]
@@ -65,14 +71,22 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 	cmd := stateless.TestAuthCommand{
 		UserId:    stateless.UserID(req.UserID),
 		UserAgent: r.UserAgent(),
-		IP:        r.RemoteAddr,
+		IP:        getip.GetIP(r),
 	}
 	tokens, err := h.service.TestAuthenticateUser(r.Context(), cmd)
 	if err != nil {
 		httperror.WriteJSONError(w, http.StatusUnauthorized, "internal server error")
+		h.logger.Error("failed to authenticate user", "error", err)
 		return
 	}
-	json.NewEncoder(w).Encode(tokens)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}{
+		AccessToken:  string(tokens.AccessToken),
+		RefreshToken: string(tokens.RefreshToken),
+	})
 }
 
 type RefreshRequest struct {
@@ -93,10 +107,11 @@ type RefreshRequest struct {
 // @Failure 400 {object} httperror.ErrorResponse "bad request"
 // @Failure 403 {object} httperror.ErrorResponse
 // @Router /auth/refresh [post]
-// @Example request "Пример пары токенов" {
-//   "access_token": "access-token-abc",
-//   "refresh_token": "refresh-token-def"
-// }
+//
+//	@Example request "Пример пары токенов" {
+//	  "access_token": "access-token-abc",
+//	  "refresh_token": "refresh-token-def"
+//	}
 func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodPost {
@@ -111,21 +126,24 @@ func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	err := json.Unmarshal(body, &req)
 	if err != nil || req.AccessToken == "" || req.RefreshToken == "" {
 		httperror.WriteJSONError(w, http.StatusBadRequest, "bad request")
+		h.logger.Error("failed to refresh token", "error", err)
 		return
 	}
 	cmd := stateless.RefreshTokenCommand{
 		AccessToken:  stateless.AccessToken(req.AccessToken),
 		RefreshToken: stateless.RefreshToken(req.RefreshToken),
 		UserAgent:    r.UserAgent(),
-		IP:           r.RemoteAddr,
+		IP:           getip.GetIP(r),
 	}
 	tokens, err := h.service.RefreshTokens(r.Context(), cmd)
 	if err != nil {
 		if err == stateless.ErrUserAgentChanged {
 			httperror.WriteJSONError(w, http.StatusUnauthorized, "user agent changed")
+			h.logger.Error("failed to refresh token", "error", err)
 			return
 		}
 		w.WriteHeader(http.StatusForbidden)
+		h.logger.Error("failed to refresh token", "error", err)
 		return
 	}
 	json.NewEncoder(w).Encode(tokens)
@@ -146,9 +164,10 @@ type LogoutRequest struct {
 // @Failure 500 {string} string "internal server error"
 // @Router /auth/logout [post]
 // @Security Bearer
-// @Example request "Пример выхода" {
-//   "refresh_token": "refresh-token-def"
-// }
+//
+//	@Example request "Пример выхода" {
+//	  "refresh_token": "refresh-token-def"
+//	}
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodPost {
@@ -165,6 +184,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	err = h.service.Logout(r.Context(), stateless.RefreshToken(req.RefreshToken), r.Context().Value("user_id").(stateless.UserID))
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		h.logger.Error("failed to logout user", "error", err)
 		return
 	}
 	w.WriteHeader(http.StatusOK)

@@ -6,14 +6,19 @@ import (
 	mw "medods_test/internal/adapters/auth/stateless/http"
 	"medods_test/pkg/httperror"
 	"net/http"
+	"log/slog"
 )
 
 type UserHttpHandler struct {
 	authMiddleware mw.MiddlewareFactory
+	logger *slog.Logger
 }
 
-func NewUserHttpHandler() *UserHttpHandler {
-	return &UserHttpHandler{}
+func NewHandler(authMiddleware mw.MiddlewareFactory, logger *slog.Logger) *UserHttpHandler {
+	return &UserHttpHandler{
+		authMiddleware: authMiddleware,
+		logger:         logger,
+	}
 }
 
 func (h *UserHttpHandler) RegisterRoutes(mux *http.ServeMux) {

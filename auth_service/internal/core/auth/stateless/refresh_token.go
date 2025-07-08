@@ -2,6 +2,7 @@ package stateless
 
 import (
 	"context"
+	"log/slog"
 )
 
 type RefreshTokenCommand struct {
@@ -13,22 +14,22 @@ type RefreshTokenCommand struct {
 
 func (s *StatelessAuthService) RefreshTokens(ctx context.Context, cmd RefreshTokenCommand) (TokenPair, error) {
 	accessTokenPayload, err := s.accessTokenAlgs.Validate(cmd.AccessToken)
+	if err != nil && err != ErrAccessTokenExpired {
+		return TokenPair{}, err
+	}
+	if accessTokenPayload.UserID == "" {
+		return TokenPair{}, ErrAccessTokenInvalid
+	}
+
+	sessionData, err := s.authRepo.GetSession(ctx, accessTokenPayload.UserID, string(cmd.RefreshToken))
 	if err != nil {
+		s.logger.Error("Ошибка обновления токена", slog.Any("err", err), "useId:"+accessTokenPayload.UserID)
 		return TokenPair{}, err
 	}
 
-	refreshHash, err := s.refreshTokenAlgs.GetHash(string(cmd.RefreshToken))
-	if err != nil {
-		return TokenPair{}, err
-	}
-
-	sessionData, err := s.authRepo.GetSession(ctx, accessTokenPayload.UserID, refreshHash)
-	if err != nil {
-		return TokenPair{}, err
-	}
+	s.Logout(ctx, cmd.RefreshToken, accessTokenPayload.UserID)
 
 	if sessionData.UserAgent != cmd.UserAgent {
-		s.Logout(ctx, cmd.RefreshToken, accessTokenPayload.UserID)
 		return TokenPair{}, ErrUserAgentChanged
 	}
 
@@ -39,6 +40,13 @@ func (s *StatelessAuthService) RefreshTokens(ctx context.Context, cmd RefreshTok
 			NewIP:  cmd.IP,
 		})
 	}
+
+	newTokenPairID, err := s.tokenPairIDGenerator.Generate()
+	if err != nil {
+		return TokenPair{}, err
+	}
+
+	sessionData.TokenPairID = TokenPairID(newTokenPairID)
 
 	accessTokenPayload = AccessTokenPayload{
 		UserID:      accessTokenPayload.UserID,

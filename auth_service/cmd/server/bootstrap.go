@@ -1,23 +1,24 @@
 package main
 
 import (
-	statelessauthhttp "medods_test/internal/adapters/auth/stateless/http"
-	"medods_test/internal/adapters/auth/stateless/jwthelper"
-	"medods_test/internal/adapters/auth/stateless/postgres"
-	"medods_test/internal/config"
-	"medods_test/internal/core/auth/stateless"
-	"medods_test/pkg/guidgenerator"
-	"medods_test/pkg/unikelongstring"
-	"medods_test/pkg/eventbus"
 	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"net/http"
+	statelessauthhttp "medods_test/internal/adapters/auth/stateless/http"
+	"medods_test/internal/adapters/auth/stateless/jwthelper"
+	"medods_test/internal/adapters/auth/stateless/postgres"
+	userhttp "medods_test/internal/adapters/user/http"
+	"medods_test/internal/config"
+	"medods_test/internal/core/auth/stateless"
+	"medods_test/pkg/eventbus"
+	"medods_test/pkg/guidgenerator"
+	"medods_test/pkg/unikelongstring"
 	"net"
+	"net/http"
 	"os"
-	"time"
 	"strings"
+	"time"
 )
 
 type App struct {
@@ -31,10 +32,10 @@ type App struct {
 	_authRepo                  stateless.AuthRepository
 	_authHandler               *statelessauthhttp.Handler
 	_accessTokenAlgoHelper     stateless.AccessTokenAlgoHelper
-	_refreshTokenAlgoHelper    stateless.RefreshTokenAlgoHelper
+	_refreshTokenAlgoHelper    *unikelongstring.ULSHelper
 	_tokenPairIDGenerator      stateless.StringIdGenerator
 	_authHttpMiddlewareFactory *statelessauthhttp.MiddlewareFactory
-	_logger				   	   *slog.Logger
+	_logger                    *slog.Logger
 
 	//логика
 	_authService *stateless.StatelessAuthService
@@ -72,7 +73,7 @@ func (a *App) Run(ctx context.Context) {
 		} else {
 			a.Logger().Warn("UserIPChangedWebhookUrl is not configured, skipping webhook call")
 		}
-		
+
 	})
 	if a.startHttp {
 		server := &http.Server{
@@ -86,7 +87,13 @@ func (a *App) Run(ctx context.Context) {
 		go func() {
 			<-ctx.Done()
 			if err := server.Shutdown(context.Background()); err != nil {
-				
+				a.Logger().Error("failed to shutdown HTTP server", "error", err)
+			}
+		}()
+
+		go func() {
+			if err := server.ListenAndServe(); err != http.ErrServerClosed {
+				panic(err)
 			}
 		}()
 	}
@@ -97,9 +104,12 @@ func (a *App) AddHttp() error {
 
 	mux := a.httpServer()
 
-	authHandler := statelessauthhttp.NewHandler(*service, *a.authMiddleware())
+	authHandler := statelessauthhttp.NewHandler(*service, *a.authMiddleware(), a.Logger())
 
 	authHandler.RegisterRoutes(mux)
+
+	userHandler := userhttp.NewHandler(*a.authMiddleware(), a.Logger())
+	userHandler.RegisterRoutes(mux)
 
 	a.startHttp = true
 
@@ -120,11 +130,11 @@ func (a *App) accessTokenAlgoHelper() *stateless.AccessTokenAlgoHelper {
 	return &a._accessTokenAlgoHelper
 }
 
-func (a *App) refreshTokenAlgoHelper() *stateless.RefreshTokenAlgoHelper {
+func (a *App) refreshTokenAlgoHelper() *unikelongstring.ULSHelper {
 	if a._refreshTokenAlgoHelper == nil {
-		a._refreshTokenAlgoHelper = unikelongstring.NewRefreshTokenHelper()
+		a._refreshTokenAlgoHelper = unikelongstring.NewULSHelper()
 	}
-	return &a._refreshTokenAlgoHelper
+	return a._refreshTokenAlgoHelper
 }
 
 func (a *App) tokenPairIDGenerator() *stateless.StringIdGenerator {
@@ -137,14 +147,14 @@ func (a *App) tokenPairIDGenerator() *stateless.StringIdGenerator {
 func (a *App) authService() *stateless.StatelessAuthService {
 	if a._authService == nil {
 		a._authRepo = a.authRepository()
-		a._authService = stateless.NewStatelessAuthService(a._authRepo, *a.accessTokenAlgoHelper(), *a.refreshTokenAlgoHelper(), *a.tokenPairIDGenerator(), a.userIPChangedBus(), nil)
+		a._authService = stateless.NewStatelessAuthService(a._authRepo, *a.accessTokenAlgoHelper(), a.refreshTokenAlgoHelper(), *a.tokenPairIDGenerator(), a.userIPChangedBus(), a.Logger())
 	}
 	return a._authService
 }
 
 func (a *App) authRepository() stateless.AuthRepository {
 	if a._authRepo == nil {
-		a._authRepo = postgres.NewPostgresAuthRepository(a.db(), &postgres.Config{Prefix: a.config().Database.Prefix})
+		a._authRepo = postgres.NewPostgresAuthRepository(a.db(), a.refreshTokenAlgoHelper(), &postgres.Config{Prefix: a.config().Database.Prefix})
 	}
 	return a._authRepo
 }
@@ -169,6 +179,7 @@ func (a *App) db() *sql.DB {
 		cfg := a.config().Database
 		var dsn string
 		var driver string
+		// fmt.Println(a.config().Database)
 		switch cfg.DBType {
 		case "postgres":
 			driver = "postgres"
@@ -199,7 +210,7 @@ func (a *App) authMiddleware() *statelessauthhttp.MiddlewareFactory {
 	return a._authHttpMiddlewareFactory
 }
 
-func (a *App) doUserIPChangedWebhook(event stateless.UserIPChangedEvent) (error) {
+func (a *App) doUserIPChangedWebhook(event stateless.UserIPChangedEvent) error {
 	if a.config().UserIPChangedWebhookUrl == "" {
 		return fmt.Errorf("UserIPChangedWebhookUrl is not configured")
 	}
@@ -227,8 +238,6 @@ func (a *App) doUserIPChangedWebhook(event stateless.UserIPChangedEvent) (error)
 
 	return nil
 }
-
-
 
 func (a *App) httpClient() *http.Client {
 	return &http.Client{
