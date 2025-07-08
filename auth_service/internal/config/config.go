@@ -35,13 +35,6 @@ func (c *Config) Load() error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	data, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		fmt.Printf("failed to marshal config to JSON: %v", err)
-	} else {
-		fmt.Println("Loaded config:\n" + string(data))
-	}
-
 	return nil
 }
 

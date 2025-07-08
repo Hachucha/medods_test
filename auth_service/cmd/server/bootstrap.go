@@ -179,7 +179,6 @@ func (a *App) db() *sql.DB {
 		cfg := a.config().Database
 		var dsn string
 		var driver string
-		// fmt.Println(a.config().Database)
 		switch cfg.DBType {
 		case "postgres":
 			driver = "postgres"

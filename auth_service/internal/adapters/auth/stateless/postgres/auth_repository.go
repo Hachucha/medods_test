@@ -43,7 +43,6 @@ func (r *PostgresAuthRepository) DeleteSession(ctx context.Context, userID state
 func (r *PostgresAuthRepository) GetSession(ctx context.Context, userID stateless.UserID, refreshToken string) (stateless.SessionData, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT user_id, token_pair_id, refresh_hash, user_agent, ip FROM `+r.conf.Prefix+`sls_auth_sessions WHERE user_id = $1`, userID)
-		fmt.Println("userID", userID)
 	if err != nil {
 		return stateless.SessionData{}, err
 	}
